@@ -101,3 +101,8 @@ Les autres liens : une apicultrice est rattachée à un seul site, une inspectio
 2. Parce que c'est le **couple** qui est unique : une apicultrice peut adhérer à plusieurs coopératives, une coopérative a plusieurs adhérentes, mais le même couple ne doit exister qu'une fois.
 3. Elle empêche de **rejouer une mesure** : on ne peut pas renvoyer une ancienne valeur pour la même ruche au même instant.
 4. Parce que la ruche **pointe vers** le site : la table visée par une clé étrangère doit déjà exister.
+
+## Lab 3 · Testez-vous
+1. **JOIN** ne garde que les apicultrices qui ont au moins une ruche : une apicultrice sans ruche disparaît du résultat. **LEFT JOIN** la garde quand même, avec 0 ruche. Pour compter « chaque apicultrice », il faut le LEFT JOIN (et compter `r.id`, pas `*`).
+2. **L'apostrophe** ferme la chaîne de texte que le programme avait ouverte : tout ce qui suit est lu comme du SQL. **Les deux tirets** transforment la fin de la requête (l'apostrophe ajoutée par le programme) en commentaire, pour qu'il n'y ait pas d'erreur de syntaxe.
+3. Parce que l'attaquant a d'autres moyens : une saisie numérique sans apostrophe (`0 OR 1=1`), d'autres caractères ou encodages, et en plus on casse les vrais noms qui en contiennent (Côte d'Ivoire). Bricoler la saisie, c'est jouer au chat et à la souris. La seule vraie solution est la requête paramétrée (`%s`) : la valeur n'est jamais lue comme du SQL.
