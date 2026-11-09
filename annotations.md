@@ -70,3 +70,34 @@ Les autres liens : une apicultrice est rattachée à un seul site, une inspectio
 2. Parce que deux personnes peuvent avoir le même nom, et qu'un nom peut changer ou être mal écrit.
 3. **T** (altération) : on fait passer une vieille valeur pour une nouvelle.
 4. **1,1**, du côté de **RUCHE**.
+
+## Schéma relationnel
+
+### Du MCD aux tables
+| Table | Clé primaire | Autres colonnes | Clés étrangères (vers quelle table) |
+|---|---|---|---|
+| site | id (code lisible, ex. SN-CASA) | nom, pays | — |
+| cooperative | id (UUID) | code, nom | — |
+| apicultrice | id (UUID) | nom, telephone | site_id (site) |
+| ruche | id (UUID) | code, latitude, longitude, date_installation | site_id (site), apicultrice_id (apicultrice) |
+| adhesion | (apicultrice_id, cooperative_id) | date_adhesion | apicultrice_id (apicultrice), cooperative_id (cooperative) |
+| utilisateur | id (UUID) | login, mot_de_passe_hash, role | site_id (site), apicultrice_id UNIQUE (apicultrice) |
+| mesure | id (nombre auto) | horodatage, poids_kg, temp_int_c, temp_ext_c, humidite_pct, activite_sonore, batterie_pct | ruche_id (ruche) |
+| inspection | id (UUID) | date_inspection, etat_colonie, reine_presente, observations | ruche_id (ruche), apicultrice_id (apicultrice) |
+| recolte | id (UUID) | date_recolte, quantite_kg, statut, validee_le | ruche_id (ruche), apicultrice_id (apicultrice), validee_par (utilisateur) |
+| alerte | id (UUID) | type_alerte, horodatage, niveau_confiance, statut | ruche_id (ruche) |
+
+- **Règle 1** : chaque entité devient une table. Le site garde un code lisible (court, stable, pas secret) ; tout ce que l'application exposera a un UUID, pour qu'on ne puisse pas deviner l'identifiant suivant.
+- **Règle 2** : pour chaque lien 1,1 – 0,n, la clé étrangère va du côté 1,1 (la ruche garde son site et son apicultrice, la mesure garde sa ruche, etc.).
+- **Règle 3** : ADHÈRE (n des deux côtés) devient la table `adhesion`, avec une clé primaire sur deux colonnes et la date d'adhésion.
+- **Règle 4** : apicultrice – compte (0,1 – 0,1) : la clé étrangère va dans `utilisateur`, avec UNIQUE pour qu'une apicultrice n'ait jamais deux comptes.
+- **Total : 10 tables et 14 clés étrangères.**
+
+### Relancer donnees.sql une seconde fois
+Ça plante dès la première ligne : `duplicate key value violates unique constraint "site_pkey"`, car le site SN-CASA existe déjà. Grâce à BEGIN / COMMIT, tout le fichier est annulé : on n'a pas la moitié des données en double. C'est la clé primaire du site qui nous protège (et derrière, le UNIQUE sur le code des ruches et sur les téléphones).
+
+### Testez-vous · Lab 2
+1. Dans la table du côté **1,1** (ex. la ruche garde `apicultrice_id`).
+2. Parce que c'est le **couple** qui est unique : une apicultrice peut adhérer à plusieurs coopératives, une coopérative a plusieurs adhérentes, mais le même couple ne doit exister qu'une fois.
+3. Elle empêche de **rejouer une mesure** : on ne peut pas renvoyer une ancienne valeur pour la même ruche au même instant.
+4. Parce que la ruche **pointe vers** le site : la table visée par une clé étrangère doit déjà exister.
