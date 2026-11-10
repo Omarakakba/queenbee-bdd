@@ -1,105 +1,88 @@
--- anomalies.sql : provoquer les anomalies, nettoyer, puis prouver la décomposition (Lab 5)
--- AVANT : relancer plat.sql dans le terminal pour repartir d'un extrait propre.
--- Chaque commande s'exécute une par une dans le Query Tool de pgAdmin, dans l'ordre.
+-- anomalies.sql (après avoir relancé plat.sql)
 
-----------------------------------------------------------------------
--- 5.1 · Anomalie de MISE À JOUR
-----------------------------------------------------------------------
-
--- 1. L'enquête de référence : nombre de mesures et poids moyen par pays
+-- Mise à jour
+-- 1. enquête de référence
 SELECT pays, count(*) AS nb_mesures, round(avg(poids_kg), 2) AS poids_moyen
 FROM extrait_plat GROUP BY pays ORDER BY pays;
--- Résultat : 3 pays : Cameroun (96 mesures), Côte d'Ivoire (144), Sénégal (288)
+-- Cameroun 96 | Côte d'Ivoire 144 | Sénégal 288   -> 3 pays
 
--- 2a. Sur UNE SEULE ligne, Sénégal devient Senegal
+-- 2.
 UPDATE extrait_plat SET pays = 'Senegal'
 WHERE ruche_code = 'SN-KOLD-011'
   AND horodatage = (SELECT min(horodatage) FROM extrait_plat WHERE ruche_code = 'SN-KOLD-011');
--- Résultat : UPDATE 1
-
--- 2b. Sur UNE AUTRE ligne, le téléphone de Fatou Sow change
+-- UPDATE 1
 UPDATE extrait_plat SET telephone = '+221 70 999 99 99'
 WHERE ruche_code = 'SN-KOLD-012'
   AND horodatage = (SELECT min(horodatage) FROM extrait_plat WHERE ruche_code = 'SN-KOLD-012');
--- Résultat : UPDATE 1
+-- UPDATE 1
 
--- 3. On relance l'enquête
+-- 3. on relance l'enquête
 SELECT pays, count(*) AS nb_mesures, round(avg(poids_kg), 2) AS poids_moyen
 FROM extrait_plat GROUP BY pays ORDER BY pays;
--- Résultat : 4 pays : Cameroun (96), Côte d'Ivoire (144), Senegal (1), Sénégal (287)
---   -> le même site a maintenant deux pays : la base se contredit
+-- Cameroun 96 | Côte d'Ivoire 144 | Senegal 1 | Sénégal 287   -> 4 pays
 
-----------------------------------------------------------------------
--- 5.1 · Anomalie de SUPPRESSION (annulée par ROLLBACK)
-----------------------------------------------------------------------
+-- Suppression : Awa Diop n'a qu'une ruche (SN-CASA-099)
 BEGIN;
--- Awa Diop n'a qu'une ruche (SN-CASA-099) : on veut seulement effacer ses mesures
 DELETE FROM extrait_plat WHERE ruche_code = 'SN-CASA-099';
--- Résultat : DELETE 48
-SELECT apicultrice, telephone FROM extrait_plat WHERE apicultrice = 'Awa Diop';
--- Résultat : 0 ligne -> son téléphone a disparu avec les mesures
+-- DELETE 48
+SELECT telephone FROM extrait_plat WHERE apicultrice = 'Awa Diop';
+-- (0 ligne) : son téléphone a disparu
 ROLLBACK;
 
-----------------------------------------------------------------------
--- 5.1 · Anomalie d'INSERTION
-----------------------------------------------------------------------
+-- Insertion
 ALTER TABLE extrait_plat ADD PRIMARY KEY (ruche_code, horodatage);
--- Résultat : ALTER TABLE
-
--- Un nouveau site, qui n'a encore ni ruche ni mesure
+-- ALTER TABLE
 INSERT INTO extrait_plat (site_id, site_nom, pays) VALUES ('CI-KORH', 'Korhogo', 'Côte d''Ivoire');
--- Résultat : ERROR:  null value in column "ruche_code" of relation "extrait_plat" violates not-null constraint
---   -> refusé : on ne peut pas créer un site tant qu'il n'a ni ruche ni mesure
+-- ERROR:  null value in column "ruche_code" of relation "extrait_plat" violates not-null constraint
+-- DÉTAIL : Failing row contains (null, CI-KORH, Korhogo, Côte d'Ivoire, null, null, null, null, null, null).
 
-----------------------------------------------------------------------
--- 5.2 · Ici, lancer migration_3nf.sql dans le terminal : il échoue (voulu).
--- Puis retrouver les incohérences et les corriger :
-----------------------------------------------------------------------
+-- migration_3nf.sql lancée ici : refus
+-- ERROR:  duplicate key value violates unique constraint "site_pkey"
+-- DÉTAIL : Key (site_id)=(SN-KOLD) already exists.
 
--- Les sites qui ont plusieurs pays
-SELECT site_id, array_agg(DISTINCT pays) AS pays FROM extrait_plat
+-- Nettoyage : les incohérences
+SELECT site_id, array_agg(DISTINCT pays) FROM extrait_plat
 GROUP BY site_id HAVING count(DISTINCT pays) > 1;
--- Résultat : SN-KOLD | {Senegal,Sénégal}
-
--- Les ruches qui ont plusieurs téléphones
-SELECT ruche_code, array_agg(DISTINCT telephone) AS telephones FROM extrait_plat
+-- SN-KOLD | {Senegal,Sénégal}
+SELECT ruche_code, array_agg(DISTINCT telephone) FROM extrait_plat
 GROUP BY ruche_code HAVING count(DISTINCT telephone) > 1;
--- Résultat : SN-KOLD-012 | {"+221 70 999 99 99","+221 77 123 45 04"}
+-- SN-KOLD-012 | {"+221 70 999 99 99","+221 77 123 45 04"}
 
--- On garde la bonne valeur (celle de toutes les autres lignes) et on corrige
 UPDATE extrait_plat SET pays = 'Sénégal' WHERE pays = 'Senegal';
--- Résultat : UPDATE 1
+-- UPDATE 1
 UPDATE extrait_plat SET telephone = '+221 77 123 45 04' WHERE telephone = '+221 70 999 99 99';
--- Résultat : UPDATE 1
+-- UPDATE 1
 
--- Puis relancer migration_3nf.sql dans le terminal, et compter :
+-- migration_3nf.sql relancée : COMMIT
 SELECT (SELECT count(*) FROM norm.site) AS sites, (SELECT count(*) FROM norm.apicultrice) AS apicultrices,
        (SELECT count(*) FROM norm.ruche) AS ruches, (SELECT count(*) FROM norm.mesure) AS mesures;
--- Résultat : 4 sites, 8 apicultrices, 11 ruches, 528 mesures
+-- 4 | 8 | 11 | 528
 
-----------------------------------------------------------------------
--- 5.3 · Prouver que rien n'est perdu
-----------------------------------------------------------------------
+-- Preuve sans perte
+CREATE VIEW norm.reconstruit AS
+SELECT r.ruche_code, s.site_id, s.site_nom, s.pays,
+       a.apicultrice, a.telephone, a.cooperative,
+       m.horodatage, m.poids_kg, m.temp_int_c
+FROM norm.mesure m
+JOIN norm.ruche r       USING (ruche_code)
+JOIN norm.site s        USING (site_id)
+JOIN norm.apicultrice a USING (telephone);
+-- CREATE VIEW
 
--- 1. La table de départ et la vue recomposée, comparées dans les deux sens
 (SELECT * FROM extrait_plat EXCEPT SELECT * FROM norm.reconstruit)
 UNION ALL
 (SELECT * FROM norm.reconstruit EXCEPT SELECT * FROM extrait_plat);
--- Résultat : 0 ligne -> la décomposition est sans perte
+-- (0 ligne)
 
--- 2a. Attaque : un second pays pour un site existant
+-- Attaques rejouées
 INSERT INTO norm.site VALUES ('SN-KOLD', 'Kolda', 'Senegal');
--- Résultat : ERROR:  duplicate key value violates unique constraint "site_pkey"
---   DETAIL: Key (site_id)=(SN-KOLD) already exists.  -> refusé
-
--- 2b. Un site sans ruche
+-- ERROR:  duplicate key value violates unique constraint "site_pkey"
+-- DÉTAIL : Key (site_id)=(SN-KOLD) already exists.
 INSERT INTO norm.site VALUES ('CI-KORH', 'Korhogo', 'Côte d''Ivoire');
--- Résultat : INSERT 0 1 -> accepté : l'anomalie d'insertion a disparu
+-- INSERT 0 1
 
--- 3. L'enquête par pays, sur les tables norm
+-- Enquête sur les tables norm
 SELECT s.pays, count(*) AS nb_mesures, round(avg(m.poids_kg), 2) AS poids_moyen
-FROM norm.mesure m
-JOIN norm.ruche r ON r.ruche_code = m.ruche_code
-JOIN norm.site  s ON s.site_id    = r.site_id
+FROM norm.mesure m JOIN norm.ruche r USING (ruche_code) JOIN norm.site s USING (site_id)
 GROUP BY s.pays ORDER BY s.pays;
--- Résultat : de nouveau 3 pays : Cameroun (96), Côte d'Ivoire (144), Sénégal (288)
+-- Cameroun 96 | Côte d'Ivoire 144 | Sénégal 288   -> 3 pays

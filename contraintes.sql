@@ -1,74 +1,72 @@
--- contraintes.sql : confronter les dépendances aux données, puis rendre les logins uniques (Lab 4)
--- À exécuter requête par requête dans le Query Tool de pgAdmin (F5), dans l'ordre.
+-- contraintes.sql : les DF face aux données, puis les logins
 
-----------------------------------------------------------------------
--- Étape 4.3 · Chaque DF du tableau : une valeur de X ne doit avoir qu'une valeur de Y
-----------------------------------------------------------------------
+-- DF site_id -> site_nom, pays
+SELECT site_id, count(DISTINCT (site_nom, pays)) AS versions
+FROM extrait_plat GROUP BY site_id HAVING count(DISTINCT (site_nom, pays)) > 1;
+-- (0 ligne)
 
--- DF 1 : site_id -> site_nom, pays
-SELECT site_id FROM extrait_plat GROUP BY site_id
-HAVING count(DISTINCT site_nom) > 1 OR count(DISTINCT pays) > 1;
--- Résultat : 0 ligne : rien ne contredit la DF
+-- DF telephone -> apicultrice, cooperative
+SELECT telephone, count(DISTINCT (apicultrice, cooperative)) AS versions
+FROM extrait_plat GROUP BY telephone HAVING count(DISTINCT (apicultrice, cooperative)) > 1;
+-- (0 ligne)
 
--- DF 2 : telephone -> apicultrice, cooperative
-SELECT telephone FROM extrait_plat GROUP BY telephone
-HAVING count(DISTINCT apicultrice) > 1 OR count(DISTINCT cooperative) > 1;
--- Résultat : 0 ligne
+-- DF ruche_code -> site_id, telephone
+SELECT ruche_code, count(DISTINCT (site_id, telephone)) AS versions
+FROM extrait_plat GROUP BY ruche_code HAVING count(DISTINCT (site_id, telephone)) > 1;
+-- (0 ligne)
 
--- DF 3 : ruche_code -> site_id, telephone
-SELECT ruche_code FROM extrait_plat GROUP BY ruche_code
-HAVING count(DISTINCT site_id) > 1 OR count(DISTINCT telephone) > 1;
--- Résultat : 0 ligne
+-- DF ruche_code, horodatage -> poids_kg, temp_int_c
+SELECT ruche_code, horodatage, count(DISTINCT (poids_kg, temp_int_c)) AS versions
+FROM extrait_plat GROUP BY ruche_code, horodatage HAVING count(DISTINCT (poids_kg, temp_int_c)) > 1;
+-- (0 ligne)
 
--- DF 4 : ruche_code, horodatage -> poids_kg, temp_int_c
-SELECT ruche_code, horodatage FROM extrait_plat GROUP BY ruche_code, horodatage
-HAVING count(DISTINCT poids_kg) > 1 OR count(DISTINCT temp_int_c) > 1;
--- Résultat : 0 ligne
-
--- La fausse dépendance : apicultrice -> telephone (le nom donnerait le téléphone)
+-- fausse DF apicultrice -> telephone
 SELECT apicultrice, count(DISTINCT telephone) AS nb_telephones
-FROM extrait_plat GROUP BY apicultrice
-HAVING count(DISTINCT telephone) > 1;
--- Résultat : 1 ligne : « Aminata Diop » avec 2 téléphones -> la DF est fausse, le nom ne donne pas la personne
+FROM extrait_plat GROUP BY apicultrice HAVING count(DISTINCT telephone) > 1;
+--  apicultrice  | nb_telephones
+-- Aminata Diop  |             2
+-- (1 ligne)
 
-----------------------------------------------------------------------
--- Étape 4.4 · Rendre les logins uniques
-----------------------------------------------------------------------
+-- 1. logins en double
+SELECT u.login, a.nom, a.site_id FROM utilisateur u LEFT JOIN apicultrice a ON a.id = u.apicultrice_id
+WHERE u.login IN (SELECT login FROM utilisateur GROUP BY login HAVING count(*) > 1) ORDER BY a.nom, a.site_id;
+--  login  |     nom      | site_id
+-- a.diop  | Aminata Diop | SN-CASA
+-- a.diop  | Aminata Diop | SN-KOLD
+-- a.diop  | Awa Diop     | SN-CASA
+-- (3 lignes)
 
--- 1. Les logins en double
-SELECT login, count(*) AS nb FROM utilisateur GROUP BY login HAVING count(*) > 1;
--- Résultat : a.diop | 3  -> trois comptes ont le même login
-
--- 2. Poser la contrainte d'unicité
+-- 2.
 ALTER TABLE utilisateur ADD CONSTRAINT utilisateur_login_unique UNIQUE (login);
--- Résultat : ERROR:  could not create unique index "utilisateur_login_unique"
---             DETAIL: Key (login)=(a.diop) is duplicated.  -> refusé
+-- ERROR:  could not create unique index "utilisateur_login_unique"
+-- DÉTAIL : Key (login)=(a.diop) is duplicated.
 
--- 3. Un login différent pour chaque personne (on vise la personne par son téléphone, pas par son nom)
-UPDATE utilisateur SET login = 'am.diop.casa'
-WHERE apicultrice_id = (SELECT id FROM apicultrice WHERE telephone = '+221 77 123 45 01');
-UPDATE utilisateur SET login = 'am.diop.kold'
-WHERE apicultrice_id = (SELECT id FROM apicultrice WHERE telephone = '+221 77 123 45 02');
--- Awa Diop garde a.diop
--- Résultat : UPDATE 1, UPDATE 1
+-- 3.
+UPDATE utilisateur u SET login = 'awa.diop' FROM apicultrice a
+WHERE a.id = u.apicultrice_id AND a.nom = 'Awa Diop';
+-- UPDATE 1
+UPDATE utilisateur u SET login = 'aminata.diop.kold' FROM apicultrice a
+WHERE a.id = u.apicultrice_id AND a.telephone = '+221 77 123 45 02';
+-- UPDATE 1
 
--- 4. La même contrainte
+-- 4.
 ALTER TABLE utilisateur ADD CONSTRAINT utilisateur_login_unique UNIQUE (login);
--- Résultat : ALTER TABLE -> acceptée
+-- ALTER TABLE
 
--- 5. Un compte « A.Diop » (avec majuscules)
+-- 5.
 INSERT INTO utilisateur (login, role) VALUES ('A.Diop', 'apicultrice');
--- Résultat : INSERT 0 1 -> accepté : pour la base, « A.Diop » n'est pas « a.diop »
+-- INSERT 0 1
 DELETE FROM utilisateur WHERE login = 'A.Diop';
+-- DELETE 1
 
--- 6. Unicité sans tenir compte des majuscules, puis de nouveau A.Diop
+-- 6.
 CREATE UNIQUE INDEX utilisateur_login_ci ON utilisateur (lower(login));
+-- CREATE INDEX
 INSERT INTO utilisateur (login, role) VALUES ('A.Diop', 'apicultrice');
--- Résultat : ERROR:  duplicate key value violates unique constraint "utilisateur_login_ci"
---             DETAIL: Key (lower(login))=(a.diop) already exists.  -> refusé
+-- ERROR:  duplicate key value violates unique constraint "utilisateur_login_ci"
+-- DÉTAIL : Key (lower(login))=(a.diop) already exists.
 
--- Quelles lettres STRIDE un login partagé permet-il ?
--- S (usurpation) : avec le même login, on peut se connecter à la place de l'autre personne.
--- R (répudiation) : si deux personnes partagent un login, on ne sait plus qui a fait une action
---   (qui a déclaré ou validé une récolte) ; chacune peut dire « ce n'est pas moi ».
--- I (divulgation) : l'une voit les ruches, les positions GPS et les récoltes de l'autre.
+-- Lettres STRIDE permises par un login partagé :
+-- S : on peut se connecter à la place de l'autre personne
+-- R : on ne sait plus qui a fait une action (déclarer ou valider une récolte)
+-- I : chacune voit les données de l'autre
