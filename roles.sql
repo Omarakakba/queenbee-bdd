@@ -2,26 +2,38 @@
 -- noms adaptés à notre jeu d'essai : f.ba -> a.diop (Aminata Diop, SN-CASA), coord.sn -> coord.casa
 
 -- 1. Les groupes, puis les personnes
-CREATE ROLE qb_apicultrice  NOLOGIN;
-CREATE ROLE qb_coordinateur NOLOGIN;
-CREATE ROLE qb_gestionnaire NOLOGIN;
-CREATE ROLE qb_admin        NOLOGIN;
-CREATE ROLE "a.diop"          LOGIN PASSWORD 'Ruche-ad-2027'    IN ROLE qb_apicultrice;
-CREATE ROLE "awa.diop"        LOGIN PASSWORD 'Ruche-awa-2027'   IN ROLE qb_apicultrice;
-CREATE ROLE "coord.casa"      LOGIN PASSWORD 'Ruche-coord-2027' IN ROLE qb_coordinateur;
-CREATE ROLE "gest.beeafrica"  LOGIN PASSWORD 'Ruche-gest-2027'  IN ROLE qb_gestionnaire;
-CREATE ROLE "admin.beeafrica" LOGIN PASSWORD 'Ruche-admin-2027' IN ROLE qb_admin;
+-- (rôles communs à tout le serveur : on ne les crée que s'ils n'existent pas, pour pouvoir relancer
+--  le fichier ; aucun secret dans le dépôt : les mots de passe se définissent à part, dans psql)
+DO $$
+DECLARE
+  g text;
+  p text[];
+BEGIN
+  FOREACH g IN ARRAY ARRAY['qb_apicultrice', 'qb_coordinateur', 'qb_gestionnaire', 'qb_admin'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = g) THEN
+      EXECUTE format('CREATE ROLE %I NOLOGIN', g);
+    END IF;
+  END LOOP;
+  FOREACH p SLICE 1 IN ARRAY ARRAY[['a.diop', 'qb_apicultrice'], ['awa.diop', 'qb_apicultrice'],
+                                   ['coord.casa', 'qb_coordinateur'], ['gest.beeafrica', 'qb_gestionnaire'],
+                                   ['admin.beeafrica', 'qb_admin']] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = p[1]) THEN
+      EXECUTE format('CREATE ROLE %I LOGIN', p[1]);
+    END IF;
+    EXECUTE format('GRANT %I TO %I', p[2], p[1]);
+  END LOOP;
+END $$;
 
 INSERT INTO utilisateur (login, role)
 SELECT 'gest.beeafrica', 'gestionnaire'
 WHERE NOT EXISTS (SELECT 1 FROM utilisateur WHERE login = 'gest.beeafrica');
 
 -- 2. Tout fermer, puis ouvrir le minimum (CONNECT seulement : le lab 10 a besoin de TEMPORARY)
-REVOKE CONNECT ON DATABASE queenbee FROM PUBLIC;
+DO $$ BEGIN EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database()); END $$;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
-GRANT CONNECT ON DATABASE queenbee TO qb_apicultrice, qb_coordinateur, qb_gestionnaire, qb_admin;
+DO $$ BEGIN EXECUTE format('GRANT CONNECT ON DATABASE %I TO qb_apicultrice, qb_coordinateur, qb_gestionnaire, qb_admin', current_database()); END $$;
 GRANT USAGE ON SCHEMA public       TO qb_apicultrice, qb_coordinateur, qb_gestionnaire, qb_admin;
 GRANT EXECUTE ON FUNCTION qui()    TO qb_apicultrice, qb_coordinateur, qb_gestionnaire, qb_admin;
 
@@ -69,6 +81,7 @@ WHERE r.site_id = (SELECT site_id FROM utilisateur WHERE login = qui());
 GRANT SELECT ON v_moi TO qb_apicultrice, qb_coordinateur, qb_gestionnaire, qb_admin;
 GRANT SELECT ON v_mes_ruches, v_mes_mesures TO qb_apicultrice;
 GRANT SELECT, INSERT (ruche_id, date_recolte, quantite_kg) ON v_mes_recoltes TO qb_apicultrice;
+REVOKE ALL ON FUNCTION mon_apicultrice() FROM PUBLIC;            -- créée après le REVOKE général (constat R1)
 GRANT EXECUTE ON FUNCTION mon_apicultrice() TO qb_apicultrice;
 GRANT SELECT ON v_ruches_site, v_recoltes_site TO qb_coordinateur;
 GRANT SELECT ON synthese_site_jour, v_export_bailleur TO qb_gestionnaire;
