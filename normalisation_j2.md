@@ -37,26 +37,36 @@ Avec le trigger suivi_formation_df :
   `ERROR:  DF violée : cette apicultrice a déjà un formateur pour ce thème`
 - Fatou Sow chez Khady Ndiaye (récolte, nouveau thème pour elle) : `INSERT 0 1`
 
+Correction après retour : en UPDATE, la ligne modifiée se comparait à elle-même. Changer le formateur varroa d'Aminata Diop (Moussa Sarr -> Ibrahima Fall) était refusé à tort. La fonction exclut maintenant la ligne OLD :
+- Aminata Diop, Moussa Sarr -> Ibrahima Fall (même thème) : `UPDATE 1`
+- Aminata Diop, Khady Ndiaye -> Ibrahima Fall (elle a déjà Moussa Sarr en varroa) : `ERROR:  DF violée : cette apicultrice a déjà un formateur pour ce thème`
+
+Contournement par la table formateur : passer Khady Ndiaye en varroa donnait deux formateurs varroa à Aminata Diop sans erreur, car le trigger ne surveille que suivi_formation. Ajout du trigger formateur_theme_df (BEFORE UPDATE OF theme ON formateur) :
+- Khady Ndiaye en varroa : `ERROR:  DF violée : une apicultrice aurait deux formateurs pour ce thème`
+- Kouassi Yao en capteurs (Mariam Kone n'a que lui) : `UPDATE 1`
+
 ## Étape 6.4 · Revue BCNF du schéma
+
+Règle métier retenue (hypothèse du lab 1) : apicultrice_id -> site_id, une apicultrice n'a qu'un site et ses ruches et son compte sont dessus.
 
 | Table | Dépendances | Partie gauche = super-clé ? | BCNF ? |
 |---|---|---|---|
-| site | id -> nom, pays | oui | oui |
+| site | id -> tout | oui | oui |
 | cooperative | id -> tout ; code -> tout (UNIQUE) | oui | oui |
 | apicultrice | id -> tout ; telephone -> tout (UNIQUE) | oui | oui |
-| ruche | id -> tout ; code -> tout (UNIQUE) | oui | oui |
+| ruche | id -> tout ; code -> tout (UNIQUE) ; apicultrice_id -> site_id | non pour apicultrice_id | non |
 | adhesion | (apicultrice_id, cooperative_id) -> date_adhesion | oui | oui |
-| utilisateur | id -> tout ; apicultrice_id -> tout (UNIQUE) | oui | oui |
+| utilisateur | id -> tout ; login -> tout (UNIQUE depuis le lab 4) ; apicultrice_id -> site_id | non pour apicultrice_id (UNIQUE mais peut être NULL, donc pas une clé) | non |
 | mesure | id -> tout ; (ruche_id, horodatage) -> tout (UNIQUE) | oui | oui |
 | inspection | id -> tout | oui | oui |
 | recolte | id -> tout | oui | oui |
 | alerte | id -> tout | oui | oui |
-| formateur | id -> tout ; nom -> theme (UNIQUE) | oui | oui |
-| suivi_formation | (apicultrice_id, formateur_id) : clé seule | oui | oui |
+| formateur | id -> tout ; nom -> tout (UNIQUE) | oui | oui |
+| suivi_formation | (apicultrice_id, formateur_id), clé seule | oui | oui |
 
 apicultrice.site_id et ruche.site_id : la requête montre que chaque apicultrice n'a de ruches que sur son site.
 ```sql
 SELECT a.nom, a.site_id, array_agg(DISTINCT r.site_id)
 FROM apicultrice a JOIN ruche r ON r.apicultrice_id = a.id GROUP BY a.id, a.nom, a.site_id;
 ```
-C'est une règle métier (notre hypothèse du lab 1 : une apicultrice n'a qu'un site et ses ruches sont dessus), pas une coïncidence. Mais rien dans le schéma ne la garantit : ruche.site_id est une copie qui peut diverger. Aujourd'hui, seul le test 7 du lab 2 la contrôle ; il faudrait un trigger ou supprimer ruche.site_id.
+C'est une règle métier, pas une coïncidence. Mais alors ruche.site_id et utilisateur.site_id (pour un compte d'apicultrice) recopient apicultrice.site_id : ruche et utilisateur ne sont pas en BCNF. Rien dans le schéma ne garantit la cohérence, seul le test 7 du lab 2 la contrôle. Pour corriger : retirer site_id de ruche (on le retrouve par l'apicultrice), ou ajouter un trigger qui vérifie que le site de la ruche est celui de son apicultrice.

@@ -12,9 +12,11 @@ GROUP BY a.id, a.nom, a.site_id ORDER BY nb_ruches DESC, a.nom;
 -- Résultat : 8 lignes (les deux Aminata Diop sont séparées)
 
 -- Q3. Les ruches jamais inspectées
--- Algèbre : π code ( ruche ) − π ruche_id ( inspection )
+-- Algèbre : π code ( ruche ) − π code ( ruche ⋈ id = ruche_id inspection )
 SELECT code FROM ruche
-WHERE id IN (SELECT id FROM ruche EXCEPT SELECT ruche_id FROM inspection) ORDER BY code;
+EXCEPT
+SELECT r.code FROM ruche r JOIN inspection i ON i.ruche_id = r.id
+ORDER BY code;
 -- Résultat : 6 lignes
 
 -- Q4. Les sites qui ont au moins une alerte ouverte

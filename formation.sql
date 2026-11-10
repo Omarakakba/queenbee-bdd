@@ -49,6 +49,8 @@ BEGIN
      WHERE s.apicultrice_id = NEW.apicultrice_id      -- même apicultrice
        AND s.formateur_id <> NEW.formateur_id         -- un autre formateur
        AND f.theme = (SELECT theme FROM formateur WHERE id = NEW.formateur_id)
+       AND (TG_OP = 'INSERT'                          -- en UPDATE, on ne se compare pas
+            OR (s.apicultrice_id, s.formateur_id) <> (OLD.apicultrice_id, OLD.formateur_id))
   ) THEN                                              -- pour le même thème
      RAISE EXCEPTION 'DF violée : cette apicultrice a déjà un formateur pour ce thème';
   END IF;
@@ -59,3 +61,26 @@ $$;
 CREATE TRIGGER suivi_formation_df
 BEFORE INSERT OR UPDATE ON suivi_formation
 FOR EACH ROW EXECUTE FUNCTION suivi_un_formateur_par_theme();
+
+-- changer le thème d'un formateur ne doit pas donner deux formateurs du même thème à une apicultrice
+CREATE OR REPLACE FUNCTION formateur_theme_coherent() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (
+     SELECT 1
+     FROM suivi_formation s1                          -- les apicultrices de ce formateur
+     JOIN suivi_formation s2 ON s2.apicultrice_id = s1.apicultrice_id
+                            AND s2.formateur_id <> s1.formateur_id
+     JOIN formateur f ON f.id = s2.formateur_id
+     WHERE s1.formateur_id = NEW.id
+       AND f.theme = NEW.theme                        -- ont déjà un autre formateur sur le nouveau thème
+  ) THEN
+     RAISE EXCEPTION 'DF violée : une apicultrice aurait deux formateurs pour ce thème';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER formateur_theme_df
+BEFORE UPDATE OF theme ON formateur
+FOR EACH ROW EXECUTE FUNCTION formateur_theme_coherent();
