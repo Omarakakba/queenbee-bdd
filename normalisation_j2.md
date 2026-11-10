@@ -70,3 +70,40 @@ SELECT a.nom, a.site_id, array_agg(DISTINCT r.site_id)
 FROM apicultrice a JOIN ruche r ON r.apicultrice_id = a.id GROUP BY a.id, a.nom, a.site_id;
 ```
 C'est une règle métier, pas une coïncidence. Mais alors ruche.site_id et utilisateur.site_id (pour un compte d'apicultrice) recopient apicultrice.site_id : ruche et utilisateur ne sont pas en BCNF. Rien dans le schéma ne garantit la cohérence, seul le test 7 du lab 2 la contrôle. Pour corriger : retirer site_id de ruche (on le retrouve par l'apicultrice), ou ajouter un trigger qui vérifie que le site de la ruche est celui de son apicultrice.
+
+## Étape 7.1 · Mesurer avant de copier
+
+volume.sql : INSERT 0 47520 (11 ruches x 90 jours x 48).
+Notre site SN-CASA n'a que 3 ruches (4 dans le sujet) : 144 mesures par jour au lieu de 192.
+
+Tableau de bord SN-CASA (3 derniers jours) : 144 | 144 | 144 mesures.
+EXPLAIN ANALYZE : Seq Scan sur les 48 048 mesures, Execution Time = 19,5 ms.
+
+## Étape 7.2 · La synthèse
+
+Même requête sur synthese_site_jour : mêmes chiffres, Index Scan sur synthese_site_jour_pk, Execution Time = 0,006 ms (au lieu de 19,5 ms).
+
+Vol sur SN-CASA-014 (SN-CASA-011 n'existe pas chez nous), 15 mars 6 h, 8,40 kg :
+- avant le REFRESH, la vue s'arrête au 14 mars, rien d'anormal ;
+- après REFRESH MATERIALIZED VIEW CONCURRENTLY : `SN-CASA | 2027-03-15 | 1 | 8.40 | 8.40 | 90`.
+
+Si la vue n'est rafraîchie que la nuit, un vol à 6 h reste invisible jusqu'au rafraîchissement suivant, soit environ 18 h (jusqu'à 24 h dans le pire cas). Un vol se détecte donc sur les mesures brutes, au moment où elles arrivent (requête ou trigger sur mesure), pas dans la synthèse qui sert seulement au tableau de bord.
+
+## Étape 7.3 · L'export pour le bailleur
+
+Haché simple du téléphone de Fatou Sow (notre Fatou Ba) : `1e37b0c6...0e7b`. En essayant le million de numéros qui commencent par +221 77 1, on retrouve `+221 77 123 45 04` en 882 ms. Un sha256 sans clé ne protège donc rien.
+
+v_export_bailleur : 8 lignes pour 11 ruches, sans nom ni téléphone, positions comme 12.6 | -16.3. Vérification de la clé dans la définition de la vue : `f`.
+
+Colonnes retirées :
+- nom et telephone : ils identifient directement la personne ;
+- id de l'apicultrice : remplacé par un HMAC avec clé secrète, impossible à recalculer sans la clé ;
+- code de la ruche : avec le site, il permet de retrouver la ruche et sa propriétaire ;
+- latitude et longitude exactes : arrondies à 0,1 degré (environ 11 km) pour qu'on ne puisse pas aller voler la ruche ;
+- détail des récoltes (dates, quantités, validee_par) : seul le total validé est utile au bailleur, et validee_par désigne un coordinateur.
+
+## Étape 7.4 · Le journal d'audit
+
+1. ligne_id n'est pas une clé étrangère : si la récolte était supprimée, la clé étrangère refuserait la suppression ou effacerait les lignes du journal avec elle (CASCADE). Or le journal doit justement garder la trace d'une ligne supprimée. Et il surveille plusieurs tables, une seule clé étrangère ne suffirait pas.
+2. Oui. C'est une copie voulue : le journal garde l'état de la ligne au moment de l'action, c'est la preuve. Il n'est jamais modifié, donc la copie ne peut pas diverger. Il contient des données personnelles, d'où le REVOKE ALL.
+3. now() donne l'heure du début de la transaction : toutes les actions d'une même transaction auraient la même heure, on ne pourrait plus les ordonner. clock_timestamp() donne l'heure réelle de chaque action.
